@@ -8,8 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs", "standalone"] }
-nih_plug_vizia = { path = "nih_plug_vizia" }
-vizia = "0.1.0"
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 
 [workspace]
 members = ["xtask"]

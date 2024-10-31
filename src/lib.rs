@@ -1,13 +1,11 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
 use std::any::TypeId;
-use nih_plug_vizia::ViziaState;
 
 mod params;
 mod envelope;
 mod filter;
 mod util;
-mod gui;
 
 use params::AmSynthParams;
 use envelope::{Envelope, ConventionalAdsr, Dx7Adsr};
@@ -18,19 +16,17 @@ struct AmSynth {
     sample_rate: f32,
     carrier_phase: f32,
     modulator_phase: f32,
-    carrier_envelope: Box<dyn Envelope + Send>,
-    modulator_envelope: Box<dyn Envelope + Send>,
+    carrier_envelope: Box<dyn Envelope>,
+    modulator_envelope: Box<dyn Envelope>,
     filter: ResonantFilter,
     note_on: bool,
     note_frequency: f32,
-    gui: Option<ViziaState>,
 }
 
 impl Default for AmSynth {
     fn default() -> Self {
-        let params = Arc::new(AmSynthParams::default());
         Self {
-            params: params.clone(),
+            params: Arc::new(AmSynthParams::default()),
             sample_rate: 44100.0,
             carrier_phase: 0.0,
             modulator_phase: 0.0,
@@ -39,7 +35,6 @@ impl Default for AmSynth {
             filter: ResonantFilter::new(),
             note_on: false,
             note_frequency: 440.0,
-            gui: None,
         }
     }
 }
@@ -67,11 +62,6 @@ impl Plugin for AmSynth {
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
-
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        self.gui.clone().map(|state| Box::new(state) as Box<dyn Editor>)
-    }
-    
 
     fn initialize(
         &mut self,
@@ -137,7 +127,7 @@ impl Plugin for AmSynth {
         let modulator_keyboard = self.params.modulator_keyboard.value();
 
         for (sample_id, channel_samples) in buffer.iter_samples().enumerate() {
-            let _time = sample_id as f32 / self.sample_rate;
+            let time = sample_id as f32 / self.sample_rate;
 
             // Process MIDI events
             while let Some(event) = context.next_event() {
@@ -200,7 +190,7 @@ impl Plugin for AmSynth {
 }
 
 impl ClapPlugin for AmSynth {
-    const CLAP_ID: &'static str = "com.your-name.am-synth";
+    const CLAP_ID: &'static str = "de.muzikar.amsynth";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("A simple AM synth");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
