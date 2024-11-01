@@ -23,7 +23,7 @@ jobs:
           override: true
 
       - name: Install dependencies
-        run: rustup component add clippy rustfmt
+        run: cargo fetch
 
       - name: Build am_synth
         run: cargo xtask bundle am_synth --release

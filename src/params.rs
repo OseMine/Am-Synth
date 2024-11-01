@@ -1,15 +1,18 @@
 use nih_plug::prelude::*;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct AmSynthParams {
     #[id = "carrier_freq"]
     pub carrier_freq: FloatParam,
+
     #[id = "modulator_freq"]
     pub modulator_freq: FloatParam,
+
     #[id = "mod_depth"]
     pub mod_depth: FloatParam,
 
-    // ADSR for carrier
+    // Carrier Envelope
     #[id = "carrier_attack"]
     pub carrier_attack: FloatParam,
     #[id = "carrier_decay"]
@@ -19,7 +22,7 @@ pub struct AmSynthParams {
     #[id = "carrier_release"]
     pub carrier_release: FloatParam,
 
-    // ADSR for modulator
+    // Modulator Envelope
     #[id = "modulator_attack"]
     pub modulator_attack: FloatParam,
     #[id = "modulator_decay"]
@@ -29,43 +32,49 @@ pub struct AmSynthParams {
     #[id = "modulator_release"]
     pub modulator_release: FloatParam,
 
-    // Filter parameters
-    #[id = "filter_cutoff"]
-    pub filter_cutoff: FloatParam,
-    #[id = "filter_resonance"]
-    pub filter_resonance: FloatParam,
+    // Global Envelope
+    #[id = "global_attack"]
+    pub global_attack: FloatParam,
+    #[id = "global_decay"]
+    pub global_decay: FloatParam,
+    #[id = "global_sustain"]
+    pub global_sustain: FloatParam,
+    #[id = "global_release"]
+    pub global_release: FloatParam,
 
-    // Keyboard control
+    // Carrier Filter
+    #[id = "carrier_filter_type"]
+    pub carrier_filter_type: BoolParam,
+    #[id = "carrier_filter_cutoff"]
+    pub carrier_filter_cutoff: FloatParam,
+    #[id = "carrier_filter_resonance"]
+    pub carrier_filter_resonance: FloatParam,
+
+    // Modulator Filter
+    #[id = "modulator_filter_type"]
+    pub modulator_filter_type: BoolParam,
+    #[id = "modulator_filter_cutoff"]
+    pub modulator_filter_cutoff: FloatParam,
+    #[id = "modulator_filter_resonance"]
+    pub modulator_filter_resonance: FloatParam,
+
+    // Global Filter
+    #[id = "global_filter_type"]
+    pub global_filter_type: BoolParam,
+    #[id = "global_filter_cutoff"]
+    pub global_filter_cutoff: FloatParam,
+    #[id = "global_filter_resonance"]
+    pub global_filter_resonance: FloatParam,
+
+    // Neue Parameter
     #[id = "carrier_keyboard"]
     pub carrier_keyboard: BoolParam,
+
     #[id = "modulator_keyboard"]
     pub modulator_keyboard: BoolParam,
 
-    // Envelope type selection
-    #[id = "carrier_envelope_type"]
-    pub carrier_envelope_type: BoolParam,
-    #[id = "modulator_envelope_type"]
-    pub modulator_envelope_type: BoolParam,
-
-    // DX7-style envelope parameters
-    pub carrier_envelope_params: EnvelopeParams,
-    pub modulator_envelope_params: EnvelopeParams,
-}
-
-#[derive(Clone, Copy)]
-pub struct EnvelopeParams {
-    pub attack: f32,
-    pub decay: f32,
-    pub sustain: f32,
-    pub release: f32,
-    pub level1: f32,
-    pub level2: f32,
-    pub level3: f32,
-    pub level4: f32,
-    pub rate1: f32,
-    pub rate2: f32,
-    pub rate3: f32,
-    pub rate4: f32,
+    #[id = "tuning"]
+    pub tuning: FloatParam,
 }
 
 impl Default for AmSynthParams {
@@ -99,6 +108,7 @@ impl Default for AmSynthParams {
 
             mod_depth: FloatParam::new("Mod Depth", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
+            // Envelope parameters (for carrier, modulator, and global)
             carrier_attack: FloatParam::new("Carrier Attack", 0.01, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
                 .with_unit(" s"),
             carrier_decay: FloatParam::new("Carrier Decay", 0.1, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
@@ -115,8 +125,19 @@ impl Default for AmSynthParams {
             modulator_release: FloatParam::new("Modulator Release", 0.1, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
                 .with_unit(" s"),
 
-            filter_cutoff: FloatParam::new(
-                "Filter Cutoff",
+            global_attack: FloatParam::new("Global Attack", 0.01, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
+                .with_unit(" s"),
+            global_decay: FloatParam::new("Global Decay", 0.1, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
+                .with_unit(" s"),
+            global_sustain: FloatParam::new("Global Sustain", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            global_release: FloatParam::new("Global Release", 0.1, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
+                .with_unit(" s"),
+
+            // Filter parameters (for carrier, modulator, and global)
+            carrier_filter_type: BoolParam::new("Carrier Filter Type", true)
+                .with_value_to_string(Arc::new(|v| String::from(if v { "Moog" } else { "Roland" }))),
+            carrier_filter_cutoff: FloatParam::new(
+                "Carrier Filter Cutoff",
                 1000.0,
                 FloatRange::Skewed {
                     min: 20.0,
@@ -127,36 +148,54 @@ impl Default for AmSynthParams {
             .with_unit(" Hz")
             .with_value_to_string(formatters::v2s_f32_hz_then_khz(2))
             .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
+            carrier_filter_resonance: FloatParam::new("Carrier Filter Resonance", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
-            filter_resonance: FloatParam::new("Filter Resonance", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            modulator_filter_type: BoolParam::new("Modulator Filter Type", true)
+                .with_value_to_string(Arc::new(|v| String::from(if v { "Moog" } else { "Roland" }))),
+            modulator_filter_cutoff: FloatParam::new(
+                "Modulator Filter Cutoff",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 20.0,
+                    max: 20000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_hz_then_khz(2))
+            .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
+            modulator_filter_resonance: FloatParam::new("Modulator Filter Resonance", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
 
+            global_filter_type: BoolParam::new("Global Filter Type", true)
+                .with_value_to_string(Arc::new(|v| String::from(if v { "Moog" } else { "Roland" }))),
+            global_filter_cutoff: FloatParam::new(
+                "Global Filter Cutoff",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 20.0,
+                    max: 20000.0,
+                    factor: FloatRange::skew_factor(-2.0),
+                },
+            )
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_hz_then_khz(2))
+            .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
+            global_filter_resonance: FloatParam::new("Global Filter Resonance", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+
+            // Neue Parameter initialisieren
             carrier_keyboard: BoolParam::new("Carrier Keyboard", true),
             modulator_keyboard: BoolParam::new("Modulator Keyboard", false),
-
-            carrier_envelope_type: BoolParam::new("Carrier Env Type", false),
-            modulator_envelope_type: BoolParam::new("Modulator Env Type", false),
-
-            carrier_envelope_params: EnvelopeParams::default(),
-            modulator_envelope_params: EnvelopeParams::default(),
-        }
-    }
-}
-
-impl Default for EnvelopeParams {
-    fn default() -> Self {
-        Self {
-            attack: 0.01,
-            decay: 0.1,
-            sustain: 0.5,
-            release: 0.1,
-            level1: 1.0,
-            level2: 0.8,
-            level3: 0.6,
-            level4: 0.0,
-            rate1: 0.1,
-            rate2: 0.2,
-            rate3: 0.3,
-            rate4: 0.4,
+            tuning: FloatParam::new(
+                "Tuning",
+                440.0,
+                FloatRange::Linear {
+                    min: 415.0,
+                    max: 465.0,
+                },
+            )
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_hz_then_khz(2))
+            .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
         }
     }
 }

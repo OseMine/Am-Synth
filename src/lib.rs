@@ -1,26 +1,43 @@
 use nih_plug::prelude::*;
 use std::sync::Arc;
-use std::any::TypeId;
+use std::num::NonZeroU32;
 
 mod params;
-mod envelope;
-mod filter;
 mod util;
+mod filter;
+mod bridge;
+mod synth;
 
 use params::AmSynthParams;
-use envelope::{Envelope, ConventionalAdsr, Dx7Adsr};
-use filter::ResonantFilter;
+use bridge::am::AmBridge;
+use synth::sine::SineOscillator;
 
 struct AmSynth {
     params: Arc<AmSynthParams>,
     sample_rate: f32,
-    carrier_phase: f32,
-    modulator_phase: f32,
-    carrier_envelope: Box<dyn Envelope>,
-    modulator_envelope: Box<dyn Envelope>,
-    filter: ResonantFilter,
-    note_on: bool,
-    note_frequency: f32,
+    voices: Vec<Voice>,
+}
+
+struct Voice {
+    carrier: SineOscillator,
+    modulator: SineOscillator,
+    bridge: AmBridge,
+    active: bool,
+    note: u8,
+    velocity: f32,
+}
+
+impl Voice {
+    fn new(sample_rate: f32) -> Self {
+        Self {
+            carrier: SineOscillator::new(sample_rate),
+            modulator: SineOscillator::new(sample_rate),
+            bridge: AmBridge::new(),
+            active: false,
+            note: 0,
+            velocity: 0.0,
+        }
+    }
 }
 
 impl Default for AmSynth {
@@ -28,160 +45,97 @@ impl Default for AmSynth {
         Self {
             params: Arc::new(AmSynthParams::default()),
             sample_rate: 44100.0,
-            carrier_phase: 0.0,
-            modulator_phase: 0.0,
-            carrier_envelope: Box::new(ConventionalAdsr::new()),
-            modulator_envelope: Box::new(ConventionalAdsr::new()),
-            filter: ResonantFilter::new(),
-            note_on: false,
-            note_frequency: 440.0,
+            voices: (0..8).map(|_| Voice::new(44100.0)).collect(),
         }
     }
 }
 
 impl Plugin for AmSynth {
     const NAME: &'static str = "AM Synth";
-    const VENDOR: &'static str = "OseMine";
-    const URL: &'static str = "https://your-website.com";
-    const EMAIL: &'static str = "your@email.com";
-
+    const VENDOR: &'static str = "The Muzikar";
+    const URL: &'static str = "";
+    const EMAIL: &'static str = "oskar.wiedrich@gmail.com";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
-        main_input_channels: None,
+        main_input_channels: NonZeroU32::new(0),
         main_output_channels: NonZeroU32::new(2),
-        ..AudioIOLayout::const_default()
+        aux_input_ports: &[],
+        aux_output_ports: &[],
+        names: PortNames::const_default(),
     }];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
-    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
-
-    type SysExMessage = ();
     type BackgroundTask = ();
+    type SysExMessage = ();
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
-
-    fn initialize(
-        &mut self,
-        _audio_io_layout: &AudioIOLayout,
-        buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
-    ) -> bool {
+    
+    fn initialize(&mut self, _audio_io_layout: &AudioIOLayout, buffer_config: &BufferConfig, _context: &mut impl InitContext<Self>) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+        self.voices = (0..8).map(|_| Voice::new(self.sample_rate)).collect();
         true
     }
 
     fn reset(&mut self) {
-        self.carrier_phase = 0.0;
-        self.modulator_phase = 0.0;
-        self.carrier_envelope = Box::new(ConventionalAdsr::new());
-        self.modulator_envelope = Box::new(ConventionalAdsr::new());
-        self.filter = ResonantFilter::new();
-        self.note_on = false;
-        self.note_frequency = 440.0;
+        for voice in &mut self.voices {
+            voice.active = false;
+        }
     }
 
-    fn process(
-        &mut self,
-        buffer: &mut Buffer,
-        _aux: &mut AuxiliaryBuffers,
-        context: &mut impl ProcessContext<Self>,
-    ) -> ProcessStatus {
-        let carrier_freq = self.params.carrier_freq.smoothed.next();
-        let modulator_freq = self.params.modulator_freq.smoothed.next();
-        let mod_depth = self.params.mod_depth.smoothed.next();
+    fn process(&mut self, buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
+        let tuning = self.params.tuning.value();
 
-        // Update envelopes based on the selected type
-        if self.params.carrier_envelope_type.value() {
-            if self.carrier_envelope.as_any().type_id() != TypeId::of::<Dx7Adsr>() {
-                self.carrier_envelope = Box::new(Dx7Adsr::new());
-            }
-        } else {
-            if self.carrier_envelope.as_any().type_id() != TypeId::of::<ConventionalAdsr>() {
-                self.carrier_envelope = Box::new(ConventionalAdsr::new());
-            }
-        }
+        for mut channel_samples in buffer.iter_samples() {
+            let mut output = 0.0;
 
-        if self.params.modulator_envelope_type.value() {
-            if self.modulator_envelope.as_any().type_id() != TypeId::of::<Dx7Adsr>() {
-                self.modulator_envelope = Box::new(Dx7Adsr::new());
-            }
-        } else {
-            if self.modulator_envelope.as_any().type_id() != TypeId::of::<ConventionalAdsr>() {
-                self.modulator_envelope = Box::new(ConventionalAdsr::new());
-            }
-        }
+            for voice in &mut self.voices {
+                if voice.active {
+                    let carrier_freq = if self.params.carrier_keyboard.value() {
+                        util::midi_note_to_freq(voice.note, tuning)
+                    } else {
+                        self.params.carrier_freq.value()
+                    };
 
-        // Update envelope parameters
-        self.carrier_envelope.set_params(&self.params.carrier_envelope_params);
-        self.modulator_envelope.set_params(&self.params.modulator_envelope_params);
+                    let modulator_freq = if self.params.modulator_keyboard.value() {
+                        util::midi_note_to_freq(voice.note, tuning)
+                    } else {
+                        self.params.modulator_freq.value()
+                    };
 
-        self.filter.set_params(
-            self.params.filter_cutoff.smoothed.next(),
-            self.params.filter_resonance.smoothed.next(),
-        );
+                    voice.carrier.set_frequency(carrier_freq);
+                    voice.modulator.set_frequency(modulator_freq);
 
-        let carrier_keyboard = self.params.carrier_keyboard.value();
-        let modulator_keyboard = self.params.modulator_keyboard.value();
+                    let carrier_sample = voice.carrier.generate();
+                    let modulator_sample = voice.modulator.generate();
+                    let modulated = voice.bridge.process(carrier_sample, modulator_sample, self.params.mod_depth.value());
 
-        for (sample_id, channel_samples) in buffer.iter_samples().enumerate() {
-            let time = sample_id as f32 / self.sample_rate;
-
-            // Process MIDI events
-            while let Some(event) = context.next_event() {
-                match event {
-                    NoteEvent::NoteOn { note, .. } => {
-                        self.note_on = true;
-                        self.note_frequency = util::midi_note_to_freq(note);
-                        self.carrier_envelope.note_on();
-                        self.modulator_envelope.note_on();
-                    }
-                    NoteEvent::NoteOff { note, .. } => {
-                        if util::midi_note_to_freq(note) == self.note_frequency {
-                            self.note_on = false;
-                            self.carrier_envelope.note_off();
-                            self.modulator_envelope.note_off();
-                        }
-                    }
-                    _ => (),
+                    output += modulated * voice.velocity;
                 }
             }
 
-            let carrier_freq = if carrier_keyboard {
-                self.note_frequency
-            } else {
-                carrier_freq
-            };
-
-            let modulator_freq = if modulator_keyboard {
-                self.note_frequency
-            } else {
-                modulator_freq
-            };
-
-            let carrier_env = self.carrier_envelope.process(self.sample_rate);
-            let modulator_env = self.modulator_envelope.process(self.sample_rate);
-
-            self.carrier_phase += carrier_freq * 2.0 * std::f32::consts::PI / self.sample_rate;
-            self.modulator_phase += modulator_freq * 2.0 * std::f32::consts::PI / self.sample_rate;
-
-            if self.carrier_phase >= 2.0 * std::f32::consts::PI {
-                self.carrier_phase -= 2.0 * std::f32::consts::PI;
+            for sample in channel_samples.iter_mut() {
+                *sample = output;
             }
-            if self.modulator_phase >= 2.0 * std::f32::consts::PI {
-                self.modulator_phase -= 2.0 * std::f32::consts::PI;
-            }
+        }
 
-            let carrier = self.carrier_phase.sin();
-            let modulator = self.modulator_phase.sin();
-
-            let am_signal = carrier * (1.0 + mod_depth * modulator * modulator_env) * carrier_env;
-            let filtered_signal = self.filter.process(am_signal, self.sample_rate);
-
-            for sample in channel_samples {
-                *sample = filtered_signal;
+        // MIDI-Ereignisse verarbeiten
+        while let Some(event) = context.next_event() {
+            match event {
+                NoteEvent::NoteOn { note, velocity, .. } => {
+                    if let Some(voice) = self.voices.iter_mut().find(|v| !v.active) {
+                        voice.active = true;
+                        voice.note = note;
+                        voice.velocity = velocity;
+                    }
+                }
+                NoteEvent::NoteOff { note, .. } => {
+                    if let Some(voice) = self.voices.iter_mut().find(|v| v.active && v.note == note) {
+                        voice.active = false;
+                    }
+                }
+                _ => (),
             }
         }
 
@@ -190,22 +144,24 @@ impl Plugin for AmSynth {
 }
 
 impl ClapPlugin for AmSynth {
-    const CLAP_ID: &'static str = "de.muzikar.amsynth";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("A simple AM synth");
+    const CLAP_ID: &'static str = "de.muzikar.am-synth";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("An AM Synthesizer");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
     const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::Instrument,
         ClapFeature::Synthesizer,
         ClapFeature::Stereo,
-        ClapFeature::Mono,
-        ClapFeature::Utility,
     ];
 }
 
 impl Vst3Plugin for AmSynth {
-    const VST3_CLASS_ID: [u8; 16] = *b"AmSynthYourName.";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Synth, Vst3SubCategory::Stereo];
+    const VST3_CLASS_ID: [u8; 16] = *b"AmSynthMuzikar..";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Instrument,
+        Vst3SubCategory::Synth,
+        Vst3SubCategory::Stereo,
+    ];
 }
 
 nih_export_clap!(AmSynth);
