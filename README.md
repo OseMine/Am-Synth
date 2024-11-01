@@ -1,4 +1,4 @@
-# Modulus (formerly AM Synth)
+#  AM Synth (future rebranding: Modulus)
 
 A modular synthesizer plugin based on AM/FM/PWM synthesis, developed using the NIH-plug framework.
 
