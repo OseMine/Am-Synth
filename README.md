@@ -18,7 +18,7 @@ A modular synthesizer plugin based on AM/FM/PWM synthesis, developed using the N
 2. Clone the repository:
    ```
    git clone https://github.com/OseMine/Am-Synth.git
-   cd modulus
+   cd am-synth
    ```
 
 3. Run `cargo fetch` to download all dependencies.
@@ -107,7 +107,7 @@ impl FmBridge {
 
 ## Development
 
-1. Run `cargo xtask bundle modulus` to compile and bundle the plugin.
+1. Run `cargo xtask bundle am_synth` to compile and bundle the plugin.
 
 2. Find the bundled plugin in the `target/bundled` directory.
 
@@ -124,6 +124,9 @@ impl FmBridge {
 ## Contributing
 
 Contributions are welcome! Please create a pull request or open an issue if you want to suggest improvements or fix bugs.
+
+## Contact
+For questions or support, please reach out to the project maintainer (@OseMine) by sending me A DM on Instagram ([@the.muzikar](https://www.instagram.com/the.muzikar/) or contacting via [Email](mailto:oskar.wiedrich@gmail.com)).
 
 ## License
 

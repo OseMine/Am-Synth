@@ -42,6 +42,9 @@ pub struct AmSynthParams {
     #[id = "global_release"]
     pub global_release: FloatParam,
 
+    #[id = "envelope_bypass"]
+    pub envelope_bypass: BoolParam,
+
     // Carrier Filter
     #[id = "carrier_filter_type"]
     pub carrier_filter_type: BoolParam,
@@ -132,7 +135,7 @@ impl Default for AmSynthParams {
             global_sustain: FloatParam::new("Global Sustain", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
             global_release: FloatParam::new("Global Release", 0.1, FloatRange::Skewed { min: 0.001, max: 1.0, factor: 0.5 })
                 .with_unit(" s"),
-
+            envelope_bypass: BoolParam::new("Envelope Bypass", false),
             // Filter parameters (for carrier, modulator, and global)
             carrier_filter_type: BoolParam::new("Carrier Filter Type", true)
                 .with_value_to_string(Arc::new(|v| String::from(if v { "Moog" } else { "Roland" }))),
